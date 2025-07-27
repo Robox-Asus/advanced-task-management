@@ -1,0 +1,115 @@
+<div class="py-4">
+  <h1 class="display-4 fw-bold text-dark mb-4">Reports & Analytics</h1>
+
+  <!-- Project Performance Report Section -->
+  <div class="card shadow-lg p-4 mb-4">
+    <h2 class="card-title fs-3 fw-bold text-dark mb-4">Project Performance Overview</h2>
+
+    <div *ngIf="loadingReports" class="text-center py-5">
+      <p class="text-muted fs-5">Generating reports...</p>
+      <div class="spinner-border text-primary" role="status">
+        <span class="visually-hidden">Loading...</span>
+      </div>
+    </div>
+
+    <div *ngIf="reportError" class="alert alert-danger text-center py-3 my-4" role="alert">
+      {{ reportError }}
+    </div>
+
+    <div *ngIf="!loadingReports && projectReports.length === 0 && !reportError" class="text-center py-5">
+      <p class="text-muted fs-5">No project performance data available.</p>
+    </div>
+
+    <div *ngIf="!loadingReports && projectReports.length > 0" class="row g-4">
+      <div class="col-12" *ngFor="let report of projectReports">
+        <div class="card shadow-sm p-4 border border-light">
+          <h3 class="card-title fs-4 fw-semibold text-dark mb-3">{{ report.projectName }}</h3>
+          <div class="row g-3 text-secondary mb-4">
+            <div class="col-md-3"><span class="fw-semibold">Total Tasks:</span> {{ report.totalTasks }}</div>
+            <div class="col-md-3"><span class="fw-semibold">Completed:</span> {{ report.completedTasks }}</div>
+            <div class="col-md-3"><span class="fw-semibold">In Progress:</span> {{ report.inProgressTasks }}</div>
+            <div class="col-md-3"><span class="fw-semibold">Overdue:</span> {{ report.overdueTasks }}</div>
+            <div class="col-12"><span class="fw-semibold">Completion Rate:</span> {{ report.completionRate | number:'1.0-2' }}%</div>
+          </div>
+
+          <h4 class="fs-5 fw-semibold text-dark mb-3">Task Distribution by Assignee:</h4>
+          <div *ngIf="report.taskDistributionByAssignee.length > 0" class="table-responsive">
+            <table class="table table-striped table-bordered">
+              <thead class="table-light">
+                <tr>
+                  <th scope="col">Assignee</th>
+                  <th scope="col">Total Tasks</th>
+                  <th scope="col">Completed Tasks</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr *ngFor="let assignee of report.taskDistributionByAssignee">
+                  <td>{{ assignee.assigneeName }}</td>
+                  <td>{{ assignee.taskCount }}</td>
+                  <td>{{ assignee.completedTaskCount }}</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+          <div *ngIf="report.taskDistributionByAssignee.length === 0" class="text-muted fs-6">No task distribution data.</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Batch Task Update Section -->
+  <div class="card shadow-lg p-4">
+    <h2 class="card-title fs-3 fw-bold text-dark mb-4">Batch Task Status Update</h2>
+
+    <div class="mb-3">
+      <label for="batchStatus" class="form-label fs-5">Select New Status:</label>
+      <select id="batchStatus" [(ngModel)]="batchUpdateStatus" class="form-select form-select-lg w-auto">
+        <option value="ToDo">To Do</option>
+        <option value="InProgress">In Progress</option>
+        <option value="Done">Done</option>
+        <option value="Blocked">Blocked</option>
+      </select>
+    </div>
+
+    <h3 class="fs-4 fw-bold text-dark mb-3">Select Tasks:</h3>
+    <div *ngIf="allTasks.length === 0" class="text-muted mb-4">No tasks available for batch update.</div>
+    <div *ngIf="allTasks.length > 0" class="row row-cols-1 row-cols-md-2 row-cols-lg-3 g-3 mb-4">
+      <div class="col" *ngFor="let task of allTasks">
+        <div class="form-check p-3 border rounded shadow-sm bg-light">
+          <input
+            class="form-check-input"
+            type="checkbox"
+            [id]="'task-' + task.id"
+            [checked]="selectedTaskIds.includes(task.id)"
+            (change)="toggleTaskSelection(task.id)"
+          >
+          <label class="form-check-label ms-2 text-dark fw-medium" [for]="'task-' + task.id">
+            {{ task.title }} ({{ task.projectName }}) - <span [ngClass]="{
+              'text-primary': task.status === 'ToDo',
+              'text-warning': task.status === 'InProgress',
+              'text-success': task.status === 'Done',
+              'text-danger': task.status === 'Blocked'
+            }" class="fw-medium">{{ task.status }}</span>
+          </label>
+        </div>
+      </div>
+    </div>
+
+    <div *ngIf="batchUpdateError" class="alert alert-danger text-center py-2 my-3" role="alert">
+      {{ batchUpdateError }}
+    </div>
+    <div *ngIf="batchUpdateMessage" class="alert alert-success text-center py-2 my-3" role="alert">
+      {{ batchUpdateMessage }}
+    </div>
+
+    <button
+      (click)="performBatchUpdate()"
+      [disabled]="selectedTaskIds.length === 0 || loadingBatchUpdate"
+      class="btn btn-info btn-lg w-100 py-2"
+    >
+      <span *ngIf="!loadingBatchUpdate">Perform Batch Update ({{ selectedTaskIds.length }} tasks selected)</span>
+      <span *ngIf="loadingBatchUpdate" class="spinner-border spinner-border-sm me-2" role="status" aria-hidden="true"></span>
+      <span *ngIf="loadingBatchUpdate">Updating...</span>
+    </button>
+  </div>
+</div>

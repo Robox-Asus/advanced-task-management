@@ -1,0 +1,1624 @@
+Advanced Collaborative Task Management System with Analytics
+1. Project Overview
+This system will enable organizations to streamline their task and project management. Key features include:
+
+User Management: Register, login, and manage users with different roles (e.g., Admin, Project Manager, Team Member).
+
+Project Management: Create, update, delete projects. Assign project managers and team members.
+
+Task Management: Create, assign, track, and update tasks within projects. Support for task statuses, priorities, and due dates.
+
+Collaboration: Comments on tasks, notifications.
+
+Analytics & Reporting: Generate detailed reports on project progress, task completion rates, team performance. This is where high-load handling with TPL will come into play for complex, aggregated reports or batch operations.
+
+Secure API: All interactions will be through a secure .NET Core Web API.
+
+Rich Frontend: A responsive Angular 19 application for user interaction.
+
+2. Architecture
+The system will follow a layered architecture, promoting separation of concerns, maintainability, and scalability.
+
+Client (Angular 19): The single-page application (SPA) that provides the user interface. It communicates with the backend API.
+
+Backend (.NET Core Web API):
+
+API Layer (Controllers): Handles HTTP requests, performs input validation, and orchestrates calls to the service layer.
+
+Service Layer (Business Logic): Contains the core business rules and logic. It interacts with the data access layer.
+
+Data Access Layer (Repositories/EF Core): Abstracts data persistence operations. Uses Entity Framework Core to interact with the database.
+
+Domain Layer (Models): Defines the entities, value objects, and aggregates that represent the business domain.
+
+Database (SQL Server/PostgreSQL): Stores all application data.
+
+Authentication/Authorization: JSON Web Tokens (JWT) for API security, integrated with ASP.NET Core Identity for user and role management.
+
+graph TD
+    A[Angular 19 Client] -->|HTTP Requests| B(ASP.NET Core Web API)
+    B --> C{Authentication/Authorization Service}
+    B --> D[Service Layer]
+    D --> E[Data Access Layer]
+    E --> F[Database (SQL Server/PostgreSQL)]
+    C -- Token Validation --> B
+
+3. Key Technologies
+.NET Core 8+: For the backend Web API, known for its performance, cross-platform capabilities, and scalability.
+
+Angular 19: For building a modern, responsive, and maintainable frontend SPA.
+
+Entity Framework Core: An ORM for database interaction, simplifying data access.
+
+JWT (JSON Web Tokens): For secure, stateless authentication.
+
+ASP.NET Core Identity: For managing users, roles, and password hashing.
+
+Task Parallel Library (TPL): For parallelizing CPU-bound operations in the backend to handle high loads.
+
+Swagger/OpenAPI: For API documentation and testing.
+
+4. Backend (C#) Implementation Steps
+We'll focus on the core aspects: Project Setup, Database, Authentication/Authorization, and High-Load Handling.
+
+Step 4.1: Project Setup
+Create a new .NET Core Web API project.
+
+dotnet new webapi -n TaskManagement.Api
+cd TaskManagement.Api
+
+Step 4.2: Database Setup (Entity Framework Core)
+Install necessary NuGet packages:
+
+dotnet add package Microsoft.EntityFrameworkCore.SqlServer
+dotnet add package Microsoft.EntityFrameworkCore.Design
+dotnet add package Microsoft.AspNetCore.Identity.EntityFrameworkCore
+
+Models/ApplicationUser.cs (Extend IdentityUser)
+
+// Models/ApplicationUser.cs
+using Microsoft.AspNetCore.Identity;
+using System.Collections.Generic;
+
+namespace TaskManagement.Api.Models
+{
+    public class ApplicationUser : IdentityUser
+    {
+        // Add any custom properties for your user here, e.g.,
+        public string? FirstName { get; set; }
+        public string? LastName { get; set; }
+
+        // Navigation property for tasks assigned to this user
+        public ICollection<TaskItem> AssignedTasks { get; set; } = new List<TaskItem>();
+    }
+}
+
+Models/Project.cs
+
+// Models/Project.cs
+using System;
+using System.Collections.Generic;
+
+namespace TaskManagement.Api.Models
+{
+    public class Project
+    {
+        public int Id { get; set; }
+        public string Name { get; set; } = string.Empty;
+        public string Description { get; set; } = string.Empty;
+        public DateTime CreatedDate { get; set; } = DateTime.UtcNow;
+        public DateTime? DueDate { get; set; }
+
+        // Foreign key for the Project Manager (ApplicationUser)
+        public string? ProjectManagerId { get; set; }
+        public ApplicationUser? ProjectManager { get; set; }
+
+        // Navigation property for tasks within this project
+        public ICollection<TaskItem> Tasks { get; set; } = new List<TaskItem>();
+
+        // Navigation property for team members in this project (many-to-many relationship)
+        public ICollection<ProjectTeamMember> ProjectTeamMembers { get; set; } = new List<ProjectTeamMember>();
+    }
+}
+
+Models/TaskItem.cs
+
+// Models/TaskItem.cs
+using System;
+using System.ComponentModel.DataAnnotations;
+using System.ComponentModel.DataAnnotations.Schema;
+
+namespace TaskManagement.Api.Models
+{
+    public enum TaskStatus
+    {
+        ToDo,
+        InProgress,
+        Done,
+        Blocked
+    }
+
+    public enum TaskPriority
+    {
+        Low,
+        Medium,
+        High,
+        Critical
+    }
+
+    public class TaskItem
+    {
+        public int Id { get; set; }
+        [Required]
+        [MaxLength(200)]
+        public string Title { get; set; } = string.Empty;
+        public string Description { get; set; } = string.Empty;
+        public TaskStatus Status { get; set; } = TaskStatus.ToDo;
+        public TaskPriority Priority { get; set; } = TaskPriority.Medium;
+        public DateTime CreatedDate { get; set; } = DateTime.UtcNow;
+        public DateTime? DueDate { get; set; }
+
+        // Foreign key for Project
+        public int ProjectId { get; set; }
+        public Project Project { get; set; } = null!; // Required navigation property
+
+        // Foreign key for Assigned User (ApplicationUser)
+        public string? AssignedToId { get; set; }
+        public ApplicationUser? AssignedTo { get; set; }
+
+        // Navigation property for comments
+        public ICollection<TaskComment> Comments { get; set; } = new List<TaskComment>();
+    }
+}
+
+Models/TaskComment.cs
+
+// Models/TaskComment.cs
+using System;
+using System.ComponentModel.DataAnnotations;
+
+namespace TaskManagement.Api.Models
+{
+    public class TaskComment
+    {
+        public int Id { get; set; }
+        [Required]
+        public string Content { get; set; } = string.Empty;
+        public DateTime CreatedDate { get; set; } = DateTime.UtcNow;
+
+        // Foreign key for the user who made the comment
+        public string UserId { get; set; } = string.Empty;
+        public ApplicationUser User { get; set; } = null!; // Required navigation property
+
+        // Foreign key for the task the comment belongs to
+        public int TaskItemId { get; set; }
+        public TaskItem TaskItem { get; set; } = null!; // Required navigation property
+    }
+}
+
+Models/ProjectTeamMember.cs (Many-to-Many Join Table)
+
+// Models/ProjectTeamMember.cs
+namespace TaskManagement.Api.Models
+{
+    public class ProjectTeamMember
+    {
+        public int ProjectId { get; set; }
+        public Project Project { get; set; } = null!;
+
+        public string UserId { get; set; } = string.Empty;
+        public ApplicationUser User { get; set; } = null!;
+    }
+}
+
+Data/ApplicationDbContext.cs
+
+// Data/ApplicationDbContext.cs
+using Microsoft.AspNetCore.Identity.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore;
+using TaskManagement.Api.Models;
+using Microsoft.AspNetCore.Identity; // Added for IdentityRole
+
+namespace TaskManagement.Api.Data
+{
+    public class ApplicationDbContext : IdentityDbContext<ApplicationUser>
+    {
+        public ApplicationDbContext(DbContextOptions<ApplicationDbContext> options)
+            : base(options)
+        {
+        }
+
+        public DbSet<Project> Projects { get; set; }
+        public DbSet<TaskItem> TaskItems { get; set; }
+        public DbSet<TaskComment> TaskComments { get; set; }
+        public DbSet<ProjectTeamMember> ProjectTeamMembers { get; set; }
+
+        protected override void OnModelCreating(ModelBuilder builder)
+        {
+            base.OnModelCreating(builder);
+
+            // Configure the many-to-many relationship for ProjectTeamMember
+            builder.Entity<ProjectTeamMember>()
+                .HasKey(ptm => new { ptm.ProjectId, ptm.UserId });
+
+            builder.Entity<ProjectTeamMember>()
+                .HasOne(ptm => ptm.Project)
+                .WithMany(p => p.ProjectTeamMembers)
+                .HasForeignKey(ptm => ptm.ProjectId);
+
+            builder.Entity<ProjectTeamMember>()
+                .HasOne(ptm => ptm.User)
+                .WithMany() // No direct navigation property from ApplicationUser to ProjectTeamMember
+                .HasForeignKey(ptm => ptm.UserId);
+
+            // Configure relationships for TaskItem
+            builder.Entity<TaskItem>()
+                .HasOne(ti => ti.Project)
+                .WithMany(p => p.Tasks)
+                .HasForeignKey(ti => ti.ProjectId)
+                .OnDelete(DeleteBehavior.Restrict); // Prevent cascade delete of project if tasks exist
+
+            builder.Entity<TaskItem>()
+                .HasOne(ti => ti.AssignedTo)
+                .WithMany(au => au.AssignedTasks) // Link to the AssignedTasks collection in ApplicationUser
+                .HasForeignKey(ti => ti.AssignedToId)
+                .OnDelete(DeleteBehavior.SetNull); // Set AssignedToId to null if user is deleted
+
+            // Configure relationships for TaskComment
+            builder.Entity<TaskComment>()
+                .HasOne(tc => tc.TaskItem)
+                .WithMany(ti => ti.Comments)
+                .HasForeignKey(tc => tc.TaskItemId)
+                .OnDelete(DeleteBehavior.Cascade); // Delete comments if task is deleted
+
+            builder.Entity<TaskComment>()
+                .HasOne(tc => tc.User)
+                .WithMany() // No direct navigation property from ApplicationUser to TaskComment
+                .HasForeignKey(tc => tc.UserId)
+                .OnDelete(DeleteBehavior.Restrict); // Prevent cascade delete of user if comments exist
+
+            // Seed roles with static GUIDs to prevent PendingModelChangesWarning
+            builder.Entity<IdentityRole>().HasData(
+                new IdentityRole { Id = "a18be9c0-aa65-4af8-bd17-0021544243a3", Name = "Admin", NormalizedName = "ADMIN", ConcurrencyStamp = "a18be9c0-aa65-4af8-bd17-0021544243a3" },
+                new IdentityRole { Id = "c18be9c0-aa65-4af8-bd17-0021544243c3", Name = "ProjectManager", NormalizedName = "PROJECTMANAGER", ConcurrencyStamp = "c18be9c0-aa65-4af8-bd17-0021544243c3" },
+                new IdentityRole { Id = "e18be9c0-aa65-4af8-bd17-0021544243e3", Name = "TeamMember", NormalizedName = "TEAMMEMBER", ConcurrencyStamp = "e18be9c0-aa65-4af8-bd17-0021544243e3" }
+            );
+        }
+    }
+}
+
+appsettings.json (Add your connection string)
+
+{
+  "Logging": {
+    "LogLevel": {
+      "Default": "Information",
+      "Microsoft.AspNetCore": "Warning"
+    }
+  },
+  "AllowedHosts": "*",
+  "ConnectionStrings": {
+    "DefaultConnection": "Server=localhost\\SQlExpress;Database=TaskManagementDb;Integrated Security=True;MultipleActiveResultSets=true;TrustServerCertificate=True;"
+  },
+  "JwtSettings": {
+    "Secret": "YourSuperSecretKeyThatIsAtLeast32CharactersLongAndVerySecure", // IMPORTANT: Change this in production!
+    "Issuer": "https://localhost:5001", // Your API URL
+    "Audience": "https://localhost:4200", // Your Angular app URL
+    "ExpirationMinutes": 60 // Token expiration time in minutes
+  }
+}
+
+Program.cs (Configure DbContext and Identity)
+
+// Program.cs (for .NET 6+ Minimal APIs)
+using Microsoft.AspNetCore.Identity;
+using Microsoft.EntityFrameworkCore;
+using TaskManagement.Api.Data;
+using TaskManagement.Api.Models;
+using Microsoft.AspNetCore.Authentication.JwtBearer;
+using Microsoft.IdentityModel.Tokens;
+using System.Text;
+using Microsoft.OpenApi.Models;
+using System.Security.Claims;
+using TaskManagement.Api.Services; // For the new services
+
+var builder = WebApplication.CreateBuilder(args);
+
+// Add services to the container.
+var connectionString = builder.Configuration.GetConnectionString("DefaultConnection");
+builder.Services.AddDbContext<ApplicationDbContext>(options =>
+    options.UseSqlServer(connectionString));
+
+builder.Services.AddIdentity<ApplicationUser, IdentityRole>(options =>
+{
+    options.Password.RequireDigit = true;
+    options.Password.RequireLowercase = true;
+    options.Password.RequireUppercase = true;
+    options.Password.RequireNonAlphanumeric = true;
+    options.Password.RequiredLength = 8;
+    options.User.RequireUniqueEmail = true;
+})
+.AddEntityFrameworkStores<ApplicationDbContext>()
+.AddDefaultTokenProviders();
+
+// Configure JWT Authentication
+var jwtSettings = builder.Configuration.GetSection("JwtSettings");
+var secretKey = jwtSettings["Secret"];
+var issuer = jwtSettings["Issuer"];
+var audience = jwtSettings["Audience"];
+
+builder.Services.AddAuthentication(options =>
+{
+    options.DefaultAuthenticateScheme = JwtBearerDefaults.AuthenticationScheme;
+    options.DefaultChallengeScheme = JwtBearerDefaults.AuthenticationScheme;
+})
+.AddJwtBearer(options =>
+{
+    options.TokenValidationParameters = new TokenValidationParameters
+    {
+        ValidateIssuer = true,
+        ValidateAudience = true,
+        ValidateLifetime = true,
+        ValidateIssuerSigningKey = true,
+        ValidIssuer = issuer,
+        ValidAudience = audience,
+        IssuerSigningKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(secretKey!))
+    };
+});
+
+builder.Services.AddAuthorization(options =>
+{
+    options.AddPolicy("AdminOnly", policy => policy.RequireRole("Admin"));
+    options.AddPolicy("ProjectManagerOrAdmin", policy => policy.RequireRole("ProjectManager", "Admin"));
+    options.AddPolicy("TeamMemberOrHigher", policy => policy.RequireRole("TeamMember", "ProjectManager", "Admin"));
+});
+
+// Add services for business logic
+builder.Services.AddScoped<ProjectService>();
+builder.Services.AddScoped<TaskService>();
+builder.Services.AddScoped<ReportService>(); // For high-load example
+
+builder.Services.AddControllers();
+// Learn more about configuring Swagger/OpenAPI at https://aka.ms/aspnetcore/swashbuckle
+builder.Services.AddEndpointsApiExplorer();
+builder.Services.AddSwaggerGen(c =>
+{
+    c.SwaggerDoc("v1", new OpenApiInfo { Title = "Task Management API", Version = "v1" });
+    // Configure Swagger to use JWT
+    c.AddSecurityDefinition("Bearer", new OpenApiSecurityScheme
+    {
+        Description = "JWT Authorization header using the Bearer scheme. Example: \"Authorization: Bearer {token}\"",
+        Name = "Authorization",
+        In = ParameterLocation.Header,
+        Type = SecuritySchemeType.ApiKey,
+        Scheme = "Bearer"
+    });
+    c.AddSecurityRequirement(new OpenApiSecurityRequirement
+    {
+        {
+            new OpenApiSecurityScheme
+            {
+                Reference = new OpenApiReference
+                {
+                    Type = ReferenceType.SecurityScheme,
+                    Id = "Bearer"
+                }
+            },
+            Array.Empty<string>()
+        }
+    });
+});
+
+// Configure CORS for Angular app
+builder.Services.AddCors(options =>
+{
+    options.AddPolicy("AllowAngularApp",
+        builder => builder.WithOrigins("http://localhost:4200") // Replace with your Angular app's URL
+                          .AllowAnyHeader()
+                          .AllowAnyMethod()
+                          .AllowCredentials());
+});
+
+
+var app = builder.Build();
+
+// Apply migrations on startup (for development)
+using (var scope = app.Services.CreateScope())
+{
+    var services = scope.ServiceProvider;
+    try
+    {
+        var context = services.GetRequiredService<ApplicationDbContext>();
+        context.Database.Migrate();
+
+        // Seed roles and an admin user
+        var userManager = services.GetRequiredService<UserManager<ApplicationUser>>();
+        var roleManager = services.GetRequiredService<RoleManager<IdentityRole>>();
+        await SeedData.Initialize(userManager, roleManager);
+    }
+    catch (Exception ex)
+    {
+        var logger = services.GetRequiredService<ILogger<Program>>();
+        logger.LogError(ex, "An error occurred while migrating or seeding the database.");
+    }
+}
+
+
+// Configure the HTTP request pipeline.
+if (app.Environment.IsDevelopment())
+{
+    app.UseSwagger();
+    app.UseSwaggerUI();
+}
+
+app.UseHttpsRedirection();
+
+app.UseCors("AllowAngularApp"); // Use the CORS policy
+
+app.UseAuthentication(); // Must be before UseAuthorization
+app.UseAuthorization();
+
+app.MapControllers();
+
+app.Run();
+
+SeedData.cs (For initial roles and admin user)
+
+// SeedData.cs
+using Microsoft.AspNetCore.Identity;
+using TaskManagement.Api.Models;
+using System.Threading.Tasks;
+using System;
+
+namespace TaskManagement.Api.Data
+{
+    public static class SeedData
+    {
+        public static async Task Initialize(UserManager<ApplicationUser> userManager, RoleManager<IdentityRole> roleManager)
+        {
+            // Seed Roles
+            string[] roleNames = { "Admin", "ProjectManager", "TeamMember" };
+            foreach (var roleName in roleNames)
+            {
+                if (!await roleManager.RoleExistsAsync(roleName))
+                {
+                    await roleManager.CreateAsync(new IdentityRole(roleName));
+                }
+            }
+
+            // Seed Admin User
+            var adminUser = new ApplicationUser
+            {
+                UserName = "admin@example.com",
+                Email = "admin@example.com",
+                FirstName = "Super",
+                LastName = "Admin",
+                EmailConfirmed = true
+            };
+
+            var user = await userManager.FindByEmailAsync(adminUser.Email);
+            if (user == null)
+            {
+                var createAdmin = await userManager.CreateAsync(adminUser, "Admin@123"); // IMPORTANT: Use a strong password in production
+                if (createAdmin.Succeeded)
+                {
+                    await userManager.AddToRoleAsync(adminUser, "Admin");
+                }
+            }
+        }
+    }
+}
+
+Now, run EF Core migrations:
+
+dotnet ef migrations add InitialCreate
+dotnet ef database update
+
+Step 4.3: Authentication & Authorization
+The Program.cs already sets up JWT Bearer authentication and role-based authorization policies.
+
+Controllers/AuthController.cs (For user registration and login)
+
+// Controllers/AuthController.cs
+using Microsoft.AspNetCore.Identity;
+using Microsoft.AspNetCore.Mvc;
+using Microsoft.Extensions.Configuration;
+using Microsoft.IdentityModel.Tokens;
+using System.IdentityModel.Tokens.Jwt;
+using System.Security.Claims;
+using System.Text;
+using System;
+using System.Threading.Tasks;
+using TaskManagement.Api.Models;
+using TaskManagement.Api.Models.DTOs; // Create this DTOs folder and files
+
+namespace TaskManagement.Api.Controllers
+{
+    [Route("api/[controller]")]
+    [ApiController]
+    public class AuthController : ControllerBase
+    {
+        private readonly UserManager<ApplicationUser> _userManager;
+        private readonly SignInManager<ApplicationUser> _signInManager;
+        private readonly IConfiguration _configuration;
+
+        public AuthController(UserManager<ApplicationUser> userManager, SignInManager<ApplicationUser> signInManager, IConfiguration configuration)
+        {
+            _userManager = userManager;
+            _signInManager = signInManager;
+            _configuration = configuration;
+        }
+
+        [HttpPost("register")]
+        public async Task<IActionResult> Register([FromBody] RegisterDto model)
+        {
+            if (!ModelState.IsValid)
+            {
+                return BadRequest(ModelState);
+            }
+
+            var user = new ApplicationUser
+            {
+                UserName = model.Email,
+                Email = model.Email,
+                FirstName = model.FirstName,
+                LastName = model.LastName
+            };
+
+            var result = await _userManager.CreateAsync(user, model.Password);
+
+            if (result.Succeeded)
+            {
+                // Assign default role (e.g., TeamMember)
+                await _userManager.AddToRoleAsync(user, "TeamMember");
+                return Ok(new { Message = "User registered successfully." });
+            }
+
+            foreach (var error in result.Errors)
+            {
+                ModelState.AddModelError(string.Empty, error.Description);
+            }
+            return BadRequest(ModelState);
+        }
+
+        [HttpPost("login")]
+        public async Task<IActionResult> Login([FromBody] LoginDto model)
+        {
+            if (!ModelState.IsValid)
+            {
+                return BadRequest(ModelState);
+            }
+
+            var user = await _userManager.FindByEmailAsync(model.Email);
+            if (user == null)
+            {
+                return Unauthorized(new { Message = "Invalid credentials." });
+            }
+
+            var result = await _signInManager.CheckPasswordSignInAsync(user, model.Password, false);
+            if (!result.Succeeded)
+            {
+                return Unauthorized(new { Message = "Invalid credentials." });
+            }
+
+            var token = await GenerateJwtToken(user);
+            return Ok(new { Token = token });
+        }
+
+        private async Task<string> GenerateJwtToken(ApplicationUser user)
+        {
+            var jwtSettings = _configuration.GetSection("JwtSettings");
+            var secretKey = jwtSettings["Secret"];
+            var issuer = jwtSettings["Issuer"];
+            var audience = jwtSettings["Audience"];
+            var expirationMinutes = Convert.ToInt32(jwtSettings["ExpirationMinutes"]);
+
+            var claims = new List<Claim>
+            {
+                new Claim(JwtRegisteredClaimNames.Sub, user.Id),
+                new Claim(JwtRegisteredClaimNames.Jti, Guid.NewGuid().ToString()),
+                new Claim(JwtRegisteredClaimNames.Email, user.Email!),
+                new Claim(ClaimTypes.NameIdentifier, user.Id),
+                new Claim(ClaimTypes.Name, user.UserName!)
+            };
+
+            var roles = await _userManager.GetRolesAsync(user);
+            foreach (var role in roles)
+            {
+                claims.Add(new Claim(ClaimTypes.Role, role));
+            }
+
+            var key = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(secretKey!));
+            var creds = new SigningCredentials(key, SecurityAlgorithms.HmacSha256);
+            var expires = DateTime.UtcNow.AddMinutes(expirationMinutes);
+
+            var token = new JwtSecurityToken(
+                issuer: issuer,
+                audience: audience,
+                claims: claims,
+                expires: expires,
+                signingCredentials: creds
+            );
+
+            return new JwtSecurityTokenHandler().WriteToken(token);
+        }
+    }
+}
+
+Models/DTOs/RegisterDto.cs
+
+// Models/DTOs/RegisterDto.cs
+using System.ComponentModel.DataAnnotations;
+
+namespace TaskManagement.Api.Models.DTOs
+{
+    public class RegisterDto
+    {
+        [Required]
+        [EmailAddress]
+        public string Email { get; set; } = string.Empty;
+
+        [Required]
+        [StringLength(100, MinimumLength = 8, ErrorMessage = "Password must be at least 8 characters long.")]
+        public string Password { get; set; } = string.Empty;
+
+        [Required]
+        [Compare("Password", ErrorMessage = "Passwords do not match.")]
+        public string ConfirmPassword { get; set; } = string.Empty;
+
+        [Required]
+        public string FirstName { get; set; } = string.Empty;
+
+        [Required]
+        public string LastName { get; set; } = string.Empty;
+    }
+}
+
+Models/DTOs/LoginDto.cs
+
+// Models/DTOs/LoginDto.cs
+using System.ComponentModel.DataAnnotations;
+
+namespace TaskManagement.Api.Models.DTOs
+{
+    public class LoginDto
+    {
+        [Required]
+        [EmailAddress]
+        public string Email { get; set; } = string.Empty;
+
+        [Required]
+        public string Password { get; set; } = string.Empty;
+    }
+}
+
+Step 4.4: Business Logic (Services)
+Create a Services folder.
+
+Services/ProjectService.cs
+
+// Services/ProjectService.cs
+using Microsoft.EntityFrameworkCore;
+using TaskManagement.Api.Data;
+using TaskManagement.Api.Models;
+using TaskManagement.Api.Models.DTOs;
+using System.Collections.Generic;
+using System.Linq;
+using System.Threading.Tasks;
+using System;
+
+namespace TaskManagement.Api.Services
+{
+    public class ProjectService
+    {
+        private readonly ApplicationDbContext _context;
+
+        public ProjectService(ApplicationDbContext context)
+        {
+            _context = context;
+        }
+
+        public async Task<IEnumerable<ProjectDto>> GetAllProjectsAsync()
+        {
+            return await _context.Projects
+                .Include(p => p.ProjectManager)
+                .Select(p => new ProjectDto
+                {
+                    Id = p.Id,
+                    Name = p.Name,
+                    Description = p.Description,
+                    CreatedDate = p.CreatedDate,
+                    DueDate = p.DueDate,
+                    ProjectManagerId = p.ProjectManagerId,
+                    ProjectManagerName = p.ProjectManager != null ? $"{p.ProjectManager.FirstName} {p.ProjectManager.LastName}" : "N/A"
+                })
+                .ToListAsync();
+        }
+
+        public async Task<ProjectDto?> GetProjectByIdAsync(int id)
+        {
+            return await _context.Projects
+                .Include(p => p.ProjectManager)
+                .Include(p => p.Tasks)
+                .Include(p => p.ProjectTeamMembers)
+                    .ThenInclude(ptm => ptm.User)
+                .Where(p => p.Id == id)
+                .Select(p => new ProjectDto
+                {
+                    Id = p.Id,
+                    Name = p.Name,
+                    Description = p.Description,
+                    CreatedDate = p.CreatedDate,
+                    DueDate = p.DueDate,
+                    ProjectManagerId = p.ProjectManagerId,
+                    ProjectManagerName = p.ProjectManager != null ? $"{p.ProjectManager.FirstName} {p.ProjectManager.LastName}" : "N/A",
+                    Tasks = p.Tasks.Select(t => new TaskDto // Simplified TaskDto for nested use
+                    {
+                        Id = t.Id,
+                        Title = t.Title,
+                        Status = t.Status.ToString(),
+                        Priority = t.Priority.ToString(),
+                        DueDate = t.DueDate,
+                        AssignedToId = t.AssignedToId,
+                        AssignedToName = t.AssignedTo != null ? $"{t.AssignedTo.FirstName} {t.AssignedTo.LastName}" : "Unassigned"
+                    }).ToList(),
+                    TeamMembers = p.ProjectTeamMembers.Select(ptm => new UserDto // Simplified UserDto for nested use
+                    {
+                        Id = ptm.User.Id,
+                        Email = ptm.User.Email,
+                        FirstName = ptm.User.FirstName,
+                        LastName = ptm.User.LastName
+                    }).ToList()
+                })
+                .FirstOrDefaultAsync();
+        }
+
+        public async Task<Project> CreateProjectAsync(CreateProjectDto createProjectDto)
+        {
+            var project = new Project
+            {
+                Name = createProjectDto.Name,
+                Description = createProjectDto.Description,
+                DueDate = createProjectDto.DueDate,
+                ProjectManagerId = createProjectDto.ProjectManagerId,
+                CreatedDate = DateTime.UtcNow
+            };
+
+            _context.Projects.Add(project);
+            await _context.SaveChangesAsync();
+            return project;
+        }
+
+        public async Task<bool> UpdateProjectAsync(int id, UpdateProjectDto updateProjectDto)
+        {
+            var project = await _context.Projects.FindAsync(id);
+            if (project == null)
+            {
+                return false;
+            }
+
+            project.Name = updateProjectDto.Name;
+            project.Description = updateProjectDto.Description;
+            project.DueDate = updateProjectDto.DueDate;
+            project.ProjectManagerId = updateProjectDto.ProjectManagerId;
+
+            _context.Projects.Update(project);
+            await _context.SaveChangesAsync();
+            return true;
+        }
+
+        public async Task<bool> DeleteProjectAsync(int id)
+        {
+            var project = await _context.Projects.FindAsync(id);
+            if (project == null)
+            {
+                return false;
+            }
+
+            _context.Projects.Remove(project);
+            await _context.SaveChangesAsync();
+            return true;
+        }
+
+        public async Task<bool> AddTeamMemberToProjectAsync(int projectId, string userId)
+        {
+            var project = await _context.Projects.FindAsync(projectId);
+            var user = await _context.Users.FindAsync(userId);
+
+            if (project == null || user == null)
+            {
+                return false;
+            }
+
+            var existingMember = await _context.ProjectTeamMembers
+                .AnyAsync(ptm => ptm.ProjectId == projectId && ptm.UserId == userId);
+
+            if (existingMember)
+            {
+                return false; // Already a member
+            }
+
+            _context.ProjectTeamMembers.Add(new ProjectTeamMember { ProjectId = projectId, UserId = userId });
+            await _context.SaveChangesAsync();
+            return true;
+        }
+
+        public async Task<bool> RemoveTeamMemberFromProjectAsync(int projectId, string userId)
+        {
+            var projectTeamMember = await _context.ProjectTeamMembers
+                .FirstOrDefaultAsync(ptm => ptm.ProjectId == projectId && ptm.UserId == userId);
+
+            if (projectTeamMember == null)
+            {
+                return false;
+            }
+
+            _context.ProjectTeamMembers.Remove(projectTeamMember);
+            await _context.SaveChangesAsync();
+            return true;
+        }
+    }
+}
+
+Services/TaskService.cs
+
+// Services/TaskService.cs
+using Microsoft.EntityFrameworkCore;
+using TaskManagement.Api.Data;
+using TaskManagement.Api.Models;
+using TaskManagement.Api.Models.DTOs;
+using System.Collections.Generic;
+using System.Linq;
+using System.Threading.Tasks;
+using System;
+
+namespace TaskManagement.Api.Services
+{
+    public class TaskService
+    {
+        private readonly ApplicationDbContext _context;
+
+        public TaskService(ApplicationDbContext context)
+        {
+            _context = context;
+        }
+
+        public async Task<IEnumerable<TaskDto>> GetAllTasksAsync()
+        {
+            return await _context.TaskItems
+                .Include(t => t.Project)
+                .Include(t => t.AssignedTo)
+                .Select(t => new TaskDto
+                {
+                    Id = t.Id,
+                    Title = t.Title,
+                    Description = t.Description,
+                    Status = t.Status.ToString(),
+                    Priority = t.Priority.ToString(),
+                    CreatedDate = t.CreatedDate,
+                    DueDate = t.DueDate,
+                    ProjectId = t.ProjectId,
+                    ProjectName = t.Project.Name,
+                    AssignedToId = t.AssignedToId,
+                    AssignedToName = t.AssignedTo != null ? $"{t.AssignedTo.FirstName} {t.AssignedTo.LastName}" : "Unassigned"
+                })
+                .ToListAsync();
+        }
+
+        public async Task<TaskDto?> GetTaskByIdAsync(int id)
+        {
+            return await _context.TaskItems
+                .Include(t => t.Project)
+                .Include(t => t.AssignedTo)
+                .Include(t => t.Comments)
+                    .ThenInclude(tc => tc.User)
+                .Where(t => t.Id == id)
+                .Select(t => new TaskDto
+                {
+                    Id = t.Id,
+                    Title = t.Title,
+                    Description = t.Description,
+                    Status = t.Status.ToString(),
+                    Priority = t.Priority.ToString(),
+                    CreatedDate = t.CreatedDate,
+                    DueDate = t.DueDate,
+                    ProjectId = t.ProjectId,
+                    ProjectName = t.Project.Name,
+                    AssignedToId = t.AssignedToId,
+                    AssignedToName = t.AssignedTo != null ? $"{t.AssignedTo.FirstName} {t.AssignedTo.LastName}" : "Unassigned",
+                    Comments = t.Comments.Select(c => new TaskCommentDto
+                    {
+                        Id = c.Id,
+                        Content = c.Content,
+                        CreatedDate = c.CreatedDate,
+                        UserId = c.UserId,
+                        UserName = $"{c.User.FirstName} {c.User.LastName}"
+                    }).ToList()
+                })
+                .FirstOrDefaultAsync();
+        }
+
+        public async Task<TaskItem> CreateTaskAsync(CreateTaskDto createTaskDto)
+        {
+            var task = new TaskItem
+            {
+                Title = createTaskDto.Title,
+                Description = createTaskDto.Description,
+                Status = Enum.Parse<TaskStatus>(createTaskDto.Status),
+                Priority = Enum.Parse<TaskPriority>(createTaskDto.Priority),
+                DueDate = createTaskDto.DueDate,
+                ProjectId = createTaskDto.ProjectId,
+                AssignedToId = createTaskDto.AssignedToId,
+                CreatedDate = DateTime.UtcNow
+            };
+
+            _context.TaskItems.Add(task);
+            await _context.SaveChangesAsync();
+            return task;
+        }
+
+        public async Task<bool> UpdateTaskAsync(int id, UpdateTaskDto updateTaskDto)
+        {
+            var task = await _context.TaskItems.FindAsync(id);
+            if (task == null)
+            {
+                return false;
+            }
+
+            task.Title = updateTaskDto.Title;
+            task.Description = updateTaskDto.Description;
+            task.Status = Enum.Parse<TaskStatus>(updateTaskDto.Status);
+            task.Priority = Enum.Parse<TaskPriority>(updateTaskDto.Priority);
+            task.DueDate = updateTaskDto.DueDate;
+            task.AssignedToId = updateTaskDto.AssignedToId;
+
+            _context.TaskItems.Update(task);
+            await _context.SaveChangesAsync();
+            return true;
+        }
+
+        public async Task<bool> DeleteTaskAsync(int id)
+        {
+            var task = await _context.TaskItems.FindAsync(id);
+            if (task == null)
+            {
+                return false;
+            }
+
+            _context.TaskItems.Remove(task);
+            await _context.SaveChangesAsync();
+            return true;
+        }
+
+        public async Task<TaskComment> AddCommentToTaskAsync(int taskId, AddTaskCommentDto commentDto, string userId)
+        {
+            var task = await _context.TaskItems.FindAsync(taskId);
+            if (task == null)
+            {
+                throw new ArgumentException("Task not found.");
+            }
+
+            var comment = new TaskComment
+            {
+                Content = commentDto.Content,
+                TaskItemId = taskId,
+                UserId = userId,
+                CreatedDate = DateTime.UtcNow
+            };
+
+            _context.TaskComments.Add(comment);
+            await _context.SaveChangesAsync();
+            return comment;
+        }
+    }
+}
+
+Services/ReportService.cs (Demonstrates TPL for high load)
+
+// Services/ReportService.cs
+using Microsoft.EntityFrameworkCore;
+using TaskManagement.Api.Data;
+using TaskManagement.Api.Models;
+using TaskManagement.Api.Models.DTOs;
+using System.Collections.Generic;
+using System.Linq;
+using System.Threading.Tasks;
+using System.Collections.Concurrent; // For thread-safe collection
+
+namespace TaskManagement.Api.Services
+{
+    public class ReportService
+    {
+        private readonly ApplicationDbContext _context;
+
+        public ReportService(ApplicationDbContext context)
+        {
+            _context = context;
+        }
+
+        /// <summary>
+        /// Generates a comprehensive project performance report,
+        /// demonstrating parallel processing for potentially large datasets.
+        /// </summary>
+        /// <returns>A list of ProjectPerformanceReportDto.</returns>
+        public async Task<IEnumerable<ProjectPerformanceReportDto>> GenerateProjectPerformanceReportAsync()
+        {
+            // Fetch all projects and related tasks efficiently.
+            // Using AsNoTracking() for read-only operations for performance.
+            var projects = await _context.Projects
+                .Include(p => p.Tasks)
+                    .ThenInclude(t => t.AssignedTo)
+                .AsNoTracking()
+                .ToListAsync();
+
+            // Use ConcurrentBag for thread-safe addition of results from parallel tasks.
+            var reports = new ConcurrentBag<ProjectPerformanceReportDto>();
+
+            // Parallel.ForEach is excellent for CPU-bound operations on collections.
+            // It automatically manages threads from the ThreadPool.
+            // For I/O-bound operations (like multiple database calls), async/await with Task.WhenAll is preferred.
+            // Here, we're simulating CPU-bound calculations per project.
+            Parallel.ForEach(projects, project =>
+            {
+                var totalTasks = project.Tasks.Count;
+                var completedTasks = project.Tasks.Count(t => t.Status == TaskStatus.Done);
+                var inProgressTasks = project.Tasks.Count(t => t.Status == TaskStatus.InProgress);
+                var overdueTasks = project.Tasks.Count(t => t.Status != TaskStatus.Done && t.DueDate.HasValue && t.DueDate.Value < System.DateTime.UtcNow);
+
+                // Calculate task distribution by assignee
+                var taskDistribution = project.Tasks
+                    .GroupBy(t => t.AssignedTo?.UserName ?? "Unassigned")
+                    .Select(g => new TaskAssigneeDistributionDto
+                    {
+                        AssigneeName = g.Key,
+                        TaskCount = g.Count(),
+                        CompletedTaskCount = g.Count(t => t.Status == TaskStatus.Done)
+                    })
+                    .ToList();
+
+                reports.Add(new ProjectPerformanceReportDto
+                {
+                    ProjectId = project.Id,
+                    ProjectName = project.Name,
+                    TotalTasks = totalTasks,
+                    CompletedTasks = completedTasks,
+                    InProgressTasks = inProgressTasks,
+                    OverdueTasks = overdueTasks,
+                    CompletionRate = totalTasks > 0 ? (double)completedTasks / totalTasks * 100 : 0,
+                    TaskDistributionByAssignee = taskDistribution
+                });
+            });
+
+            return reports.OrderBy(r => r.ProjectName).ToList();
+        }
+
+        /// <summary>
+        /// Simulates a batch update operation for tasks, using Task.WhenAll for concurrent I/O operations.
+        /// This is more suitable for database updates than Parallel.ForEach.
+        /// </summary>
+        /// <param name="taskIds">List of task IDs to update.</param>
+        /// <param name="newStatus">The new status to set for all tasks.</param>
+        /// <returns>True if all updates were attempted, false otherwise.</returns>
+        public async Task<bool> BatchUpdateTaskStatusAsync(IEnumerable<int> taskIds, TaskStatus newStatus)
+        {
+            var tasksToUpdate = await _context.TaskItems
+                                            .Where(t => taskIds.Contains(t.Id))
+                                            .ToListAsync();
+
+            if (!tasksToUpdate.Any())
+            {
+                return false;
+            }
+
+            // Create a list of tasks (representing asynchronous operations)
+            var updateTasks = new List<System.Threading.Tasks.Task>();
+
+            foreach (var task in tasksToUpdate)
+            {
+                // Each update is an async operation. We don't await immediately.
+                // Instead, we add the Task to a list.
+                updateTasks.Add(System.Threading.Tasks.Task.Run(async () =>
+                {
+                    task.Status = newStatus;
+                    // In a real-world scenario, you might want to save changes per task
+                    // or batch them more efficiently if the ORM supports it.
+                    // For simplicity, we'll just update the entity here and save all at once later.
+                    // Note: This specific usage of Task.Run inside a loop for EF Core updates
+                    // might lead to context issues if not handled carefully (e.g., separate contexts per task).
+                    // For true high-performance batch updates, consider bulk update libraries or stored procedures.
+                    // This example primarily demonstrates Task.WhenAll for concurrent operations.
+                }));
+            }
+
+            // Wait for all update tasks to complete.
+            await System.Threading.Tasks.Task.WhenAll(updateTasks);
+
+            // Save all changes to the database. This is a single transaction.
+            await _context.SaveChangesAsync();
+
+            return true;
+        }
+    }
+}
+
+Models/DTOs/ProjectDto.cs (and other DTOs)
+
+// Models/DTOs/ProjectDto.cs
+using System;
+using System.Collections.Generic;
+using System.ComponentModel.DataAnnotations;
+
+namespace TaskManagement.Api.Models.DTOs
+{
+    public class ProjectDto
+    {
+        public int Id { get; set; }
+        public string Name { get; set; } = string.Empty;
+        public string Description { get; set; } = string.Empty;
+        public DateTime CreatedDate { get; set; }
+        public DateTime? DueDate { get; set; }
+        public string? ProjectManagerId { get; set; }
+        public string? ProjectManagerName { get; set; }
+        public List<TaskDto> Tasks { get; set; } = new List<TaskDto>(); // For detailed view
+        public List<UserDto> TeamMembers { get; set; } = new List<UserDto>(); // For detailed view
+    }
+
+    public class CreateProjectDto
+    {
+        [Required]
+        [MaxLength(100)]
+        public string Name { get; set; } = string.Empty;
+        public string Description { get; set; } = string.Empty;
+        public DateTime? DueDate { get; set; }
+        public string? ProjectManagerId { get; set; } // ID of the user who will manage the project
+    }
+
+    public class UpdateProjectDto : CreateProjectDto
+    {
+        // Inherits properties from CreateProjectDto
+    }
+
+    public class AddTeamMemberDto
+    {
+        [Required]
+        public string UserId { get; set; } = string.Empty;
+    }
+}
+```csharp
+// Models/DTOs/TaskDto.cs
+using System;
+using System.Collections.Generic;
+using System.ComponentModel.DataAnnotations;
+
+namespace TaskManagement.Api.Models.DTOs
+{
+    public class TaskDto
+    {
+        public int Id { get; set; }
+        public string Title { get; set; } = string.Empty;
+        public string Description { get; set; } = string.Empty;
+        public string Status { get; set; } = string.Empty; // Enum as string
+        public string Priority { get; set; } = string.Empty; // Enum as string
+        public DateTime CreatedDate { get; set; }
+        public DateTime? DueDate { get; set; }
+        public int ProjectId { get; set; }
+        public string ProjectName { get; set; } = string.Empty;
+        public string? AssignedToId { get; set; }
+        public string? AssignedToName { get; set; }
+        public List<TaskCommentDto> Comments { get; set; } = new List<TaskCommentDto>(); // For detailed view
+    }
+
+    public class CreateTaskDto
+    {
+        [Required]
+        [MaxLength(200)]
+        public string Title { get; set; } = string.Empty;
+        public string Description { get; set; } = string.Empty;
+        [Required]
+        public string Status { get; set; } = "ToDo"; // Should match TaskStatus enum names
+        [Required]
+        public string Priority { get; set; } = "Medium"; // Should match TaskPriority enum names
+        public DateTime? DueDate { get; set; }
+        [Required]
+        public int ProjectId { get; set; }
+        public string? AssignedToId { get; set; }
+    }
+
+    public class UpdateTaskDto : CreateTaskDto
+    {
+        // Inherits properties from CreateTaskDto
+    }
+
+    public class AddTaskCommentDto
+    {
+        [Required]
+        public string Content { get; set; } = string.Empty;
+    }
+}
+```csharp
+// Models/DTOs/UserDto.cs
+using System.Collections.Generic;
+
+namespace TaskManagement.Api.Models.DTOs
+{
+    public class UserDto
+    {
+        public string Id { get; set; } = string.Empty;
+        public string Email { get; set; } = string.Empty;
+        public string? FirstName { get; set; }
+        public string? LastName { get; set; }
+        public List<string> Roles { get; set; } = new List<string>();
+    }
+}
+```csharp
+// Models/DTOs/TaskCommentDto.cs
+using System;
+
+namespace TaskManagement.Api.Models.DTOs
+{
+    public class TaskCommentDto
+    {
+        public int Id { get; set; }
+        public string Content { get; set; } = string.Empty;
+        public DateTime CreatedDate { get; set; }
+        public string UserId { get; set; } = string.Empty;
+        public string UserName { get; set; } = string.Empty;
+    }
+}
+```csharp
+// Models/DTOs/ReportDto.cs
+using System.Collections.Generic;
+
+namespace TaskManagement.Api.Models.DTOs
+{
+    public class ProjectPerformanceReportDto
+    {
+        public int ProjectId { get; set; }
+        public string ProjectName { get; set; } = string.Empty;
+        public int TotalTasks { get; set; }
+        public int CompletedTasks { get; set; }
+        public int InProgressTasks { get; set; }
+        public int OverdueTasks { get; set; }
+        public double CompletionRate { get; set; }
+        public List<TaskAssigneeDistributionDto> TaskDistributionByAssignee { get; set; } = new List<TaskAssigneeDistributionDto>();
+    }
+
+    public class TaskAssigneeDistributionDto
+    {
+        public string AssigneeName { get; set; } = string.Empty;
+        public int TaskCount { get; set; }
+        public int CompletedTaskCount { get; set; }
+    }
+
+    public class BatchUpdateTaskStatusDto
+    {
+        public List<int> TaskIds { get; set; } = new List<int>();
+        public string NewStatus { get; set; } = string.Empty; // Should match TaskStatus enum names
+    }
+}
+
+Step 4.5: Controllers
+Controllers/ProjectsController.cs
+
+// Controllers/ProjectsController.cs
+using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.Mvc;
+using TaskManagement.Api.Models.DTOs;
+using TaskManagement.Api.Services;
+using System.Collections.Generic;
+using System.Threading.Tasks;
+using System.Security.Claims; // For getting user ID
+
+namespace TaskManagement.Api.Controllers
+{
+    [Route("api/[controller]")]
+    [ApiController]
+    [Authorize] // All project endpoints require authentication by default
+    public class ProjectsController : ControllerBase
+    {
+        private readonly ProjectService _projectService;
+
+        public ProjectsController(ProjectService projectService)
+        {
+            _projectService = projectService;
+        }
+
+        [HttpGet]
+        [Authorize(Policy = "TeamMemberOrHigher")] // Any authenticated user can view projects
+        public async Task<ActionResult<IEnumerable<ProjectDto>>> GetProjects()
+        {
+            var projects = await _projectService.GetAllProjectsAsync();
+            return Ok(projects);
+        }
+
+        [HttpGet("{id}")]
+        [Authorize(Policy = "TeamMemberOrHigher")]
+        public async Task<ActionResult<ProjectDto>> GetProject(int id)
+        {
+            var project = await _projectService.GetProjectByIdAsync(id);
+            if (project == null)
+            {
+                return NotFound();
+            }
+            return Ok(project);
+        }
+
+        [HttpPost]
+        [Authorize(Policy = "ProjectManagerOrAdmin")] // Only Project Managers or Admins can create projects
+        public async Task<ActionResult<ProjectDto>> CreateProject([FromBody] CreateProjectDto createProjectDto)
+        {
+            // Optionally, if ProjectManagerId is not provided, set the current user as manager
+            if (string.IsNullOrEmpty(createProjectDto.ProjectManagerId))
+            {
+                createProjectDto.ProjectManagerId = User.FindFirstValue(ClaimTypes.NameIdentifier);
+            }
+
+            var project = await _projectService.CreateProjectAsync(createProjectDto);
+            // In a real app, you'd map the created project entity back to a DTO for the response
+            return CreatedAtAction(nameof(GetProject), new { id = project.Id }, project);
+        }
+
+        [HttpPut("{id}")]
+        [Authorize(Policy = "ProjectManagerOrAdmin")] // Only Project Managers or Admins can update projects
+        public async Task<IActionResult> UpdateProject(int id, [FromBody] UpdateProjectDto updateProjectDto)
+        {
+            var success = await _projectService.UpdateProjectAsync(id, updateProjectDto);
+            if (!success)
+            {
+                return NotFound();
+            }
+            return NoContent();
+        }
+
+        [HttpDelete("{id}")]
+        [Authorize(Policy = "AdminOnly")] // Only Admins can delete projects
+        public async Task<IActionResult> DeleteProject(int id)
+        {
+            var success = await _projectService.DeleteProjectAsync(id);
+            if (!success)
+            {
+                return NotFound();
+            }
+            return NoContent();
+        }
+
+        [HttpPost("{projectId}/team-members")]
+        [Authorize(Policy = "ProjectManagerOrAdmin")]
+        public async Task<IActionResult> AddTeamMember(int projectId, [FromBody] AddTeamMemberDto model)
+        {
+            var success = await _projectService.AddTeamMemberToProjectAsync(projectId, model.UserId);
+            if (!success)
+            {
+                return BadRequest("Failed to add team member or user already a member.");
+            }
+            return Ok(new { Message = "Team member added successfully." });
+        }
+
+        [HttpDelete("{projectId}/team-members/{userId}")]
+        [Authorize(Policy = "ProjectManagerOrAdmin")]
+        public async Task<IActionResult> RemoveTeamMember(int projectId, string userId)
+        {
+            var success = await _projectService.RemoveTeamMemberFromProjectAsync(projectId, userId);
+            if (!success)
+            {
+                return NotFound("Team member not found in project or project not found.");
+            }
+            return NoContent();
+        }
+    }
+}
+
+Controllers/TasksController.cs
+
+// Controllers/TasksController.cs
+using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.Mvc;
+using TaskManagement.Api.Models.DTOs;
+using TaskManagement.Api.Services;
+using System.Collections.Generic;
+using System.Threading.Tasks;
+using System.Security.Claims; // For getting user ID
+
+namespace TaskManagement.Api.Controllers
+{
+    [Route("api/[controller]")]
+    [ApiController]
+    [Authorize] // All task endpoints require authentication by default
+    public class TasksController : ControllerBase
+    {
+        private readonly TaskService _taskService;
+
+        public TaskService(TaskService taskService)
+        {
+            _taskService = taskService;
+        }
+
+        [HttpGet]
+        [Authorize(Policy = "TeamMemberOrHigher")]
+        public async Task<ActionResult<IEnumerable<TaskDto>>> GetTasks()
+        {
+            var tasks = await _taskService.GetAllTasksAsync();
+            return Ok(tasks);
+        }
+
+        [HttpGet("{id}")]
+        [Authorize(Policy = "TeamMemberOrHigher")]
+        public async Task<ActionResult<TaskDto>> GetTask(int id)
+        {
+            var task = await _taskService.GetTaskByIdAsync(id);
+            if (task == null)
+            {
+                return NotFound();
+            }
+            return Ok(task);
+        }
+
+        [HttpPost]
+        [Authorize(Policy = "ProjectManagerOrAdmin")] // Only Project Managers or Admins can create tasks
+        public async Task<ActionResult<TaskDto>> CreateTask([FromBody] CreateTaskDto createTaskDto)
+        {
+            var task = await _taskService.CreateTaskAsync(createTaskDto);
+            return CreatedAtAction(nameof(GetTask), new { id = task.Id }, task);
+        }
+
+        [HttpPut("{id}")]
+        [Authorize(Policy = "TeamMemberOrHigher")] // Team members can update their assigned tasks, PMs/Admins can update all
+        public async Task<IActionResult> UpdateTask(int id, [FromBody] UpdateTaskDto updateTaskDto)
+        {
+            // Implement more granular authorization here if needed, e.g.,
+            // check if the current user is the assigned user, or a PM/Admin.
+            // For simplicity, we'll rely on the policy for now.
+            var success = await _taskService.UpdateTaskAsync(id, updateTaskDto);
+            if (!success)
+            {
+                return NotFound();
+            }
+            return NoContent();
+        }
+
+        [HttpDelete("{id}")]
+        [Authorize(Policy = "ProjectManagerOrAdmin")] // Only Project Managers or Admins can delete tasks
+        public async Task<IActionResult> DeleteTask(int id)
+        {
+            var success = await _taskService.DeleteTaskAsync(id);
+            if (!success)
+            {
+                return NotFound();
+            }
+            return NoContent();
+        }
+
+        [HttpPost("{taskId}/comments")]
+        [Authorize(Policy = "TeamMemberOrHigher")]
+        public async Task<ActionResult<TaskCommentDto>> AddComment(int taskId, [FromBody] AddTaskCommentDto commentDto)
+        {
+            var userId = User.FindFirstValue(ClaimTypes.NameIdentifier);
+            if (string.IsNullOrEmpty(userId))
+            {
+                return Unauthorized("User ID not found in token.");
+            }
+
+            try
+            {
+                var comment = await _taskService.AddCommentToTaskAsync(taskId, commentDto, userId);
+                // Map to DTO for response
+                return CreatedAtAction(nameof(GetTask), new { id = taskId }, comment);
+            }
+            catch (ArgumentException ex)
+            {
+                return NotFound(ex.Message);
+            }
+        }
+    }
+}
+
+Controllers/ReportsController.cs (High-Load Handling Example)
+
+// Controllers/ReportsController.cs
+using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.Mvc;
+using TaskManagement.Api.Models;
+using TaskManagement.Api.Models.DTOs;
+using TaskManagement.Api.Services;
+using System.Collections.Generic;
+using System.Threading.Tasks;
+
+namespace TaskManagement.Api.Controllers
+{
+    [Route("api/[controller]")]
+    [ApiController]
+    [Authorize(Policy = "ProjectManagerOrAdmin")] // Only Project Managers and Admins can access reports
+    public class ReportsController : ControllerBase
+    {
+        private readonly ReportService _reportService;
+
+        public ReportService(ReportService reportService)
+        {
+            _reportService = reportService;
+        }
+
+        /// <summary>
+        /// Generates a comprehensive project performance report,
+        /// demonstrating parallel processing for potentially large datasets.
+        /// </summary>
+        [HttpGet("project-performance")]
+        public async Task<ActionResult<IEnumerable<ProjectPerformanceReportDto>>> GetProjectPerformanceReport()
+        {
+            var reports = await _reportService.GenerateProjectPerformanceReportAsync();
+            return Ok(reports);
+        }
+
+        /// <summary>
+        /// Performs a batch update of task statuses, demonstrating concurrent I/O operations.
+        /// </summary>
+        [HttpPost("batch-update-task-status")]
+        [Authorize(Policy = "ProjectManagerOrAdmin")] // Only Project Managers and Admins can perform batch updates
+        public async Task<IActionResult> BatchUpdateTaskStatus([FromBody] BatchUpdateTaskStatusDto model)
+        {
+            if (!ModelState.IsValid)
+            {
+                return BadRequest(ModelState);
+            }
+
+            if (!System.Enum.TryParse(model.NewStatus, true, out TaskStatus newStatusEnum))
+            {
+                return BadRequest("Invalid task status provided.");
+            }
+
+            var success = await _reportService.BatchUpdateTaskStatusAsync(model.TaskIds, newStatusEnum);
+
+            if (!success)
+            {
+                return BadRequest("Failed to perform batch update. Some tasks might not exist.");
+            }
+
+            return Ok(new { Message = $"Successfully updated status for {model.TaskIds.Count} tasks to {model.NewStatus}." });
+        }
+    }
+}
+
+Step 4.6: Scalability & High-Load Handling (Recap)
+Task Parallel Library (TPL):
+
+Parallel.ForEach: Used in ReportService.GenerateProjectPerformanceReportAsync for CPU-bound computations (e.g., iterating through projects and calculating metrics for each). It efficiently utilizes available CPU cores.
+
+Task.WhenAll: Used in ReportService.BatchUpdateTaskStatusAsync for I/O-bound operations (e.g., updating multiple tasks in the database concurrently). It allows multiple asynchronous operations to run in parallel and waits for all of them to complete. This is crucial for improving responsiveness when dealing with external resources like databases.
+
+Asynchronous Programming (async/await): All service and controller methods are asynchronous (Task<T>) to prevent blocking the thread pool and improve scalability under high concurrent requests.
+
+Database Optimization:
+
+EF Core AsNoTracking(): Used for read-only queries to improve performance by not tracking changes to entities.
+
+Efficient Includes: Carefully selecting Include and ThenInclude to fetch related data in a single query, minimizing round trips to the database.
+
+Indexing: In a real application, you'd add database indexes to frequently queried columns (e.g., ProjectId on TaskItems, AssignedToId on TaskItems).
+
+Stateless API (JWT): JWTs are stateless, meaning the server doesn't need to store session information, which simplifies scaling horizontally (adding more API instances).
+
+Load Balancing: In a production environment, multiple instances of the .NET Core API would run behind a load balancer to distribute incoming traffic, further enhancing scalability and availability.
+
+Caching: For frequently accessed but rarely changing data, implementing caching (e.g., Redis) can significantly reduce database load.
+
+5. Frontend (Angular 19) - High-Level Steps ---> refere file AngularCode.txt
+
+6. Industry-Level Standards & Best Practices
+Clean Architecture/Onion Architecture: The separation into Controllers, Services, and Data layers is a step towards this. For larger applications, you'd formalize this with separate projects for Domain, Application, Infrastructure, and Presentation.
+
+DTOs (Data Transfer Objects): Used extensively to control what data is sent over the wire and to decouple the API from internal domain models.
+
+Input Validation: Using data annotations ([Required], [MaxLength]) in DTOs and models, combined with ModelState.IsValid checks in controllers.
+
+Global Error Handling: Implement middleware to catch unhandled exceptions and return standardized error responses (e.g., Problem Details RFC 7807).
+
+Logging: Use ILogger for structured logging (e.g., Serilog, NLog) to monitor application health and troubleshoot issues.
+
+API Versioning: For future extensibility, consider versioning your API (e.g., api/v1/projects).
+
+Containerization (Docker): Package your .NET Core API and Angular app into Docker containers for consistent deployment across environments.
+
+CI/CD Pipelines: Automate building, testing, and deploying your application using tools like Azure DevOps, GitHub Actions, or GitLab CI.
+
+Testing: Implement unit tests for services and controllers, and integration tests for API endpoints.
+
+This project structure provides a solid foundation for a scalable, secure, and performant application. Remember to continuously refactor, test, and optimize as your project grows.

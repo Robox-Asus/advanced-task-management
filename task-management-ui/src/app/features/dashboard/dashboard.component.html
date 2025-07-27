@@ -1,0 +1,20 @@
+<div class="d-flex flex-column align-items-center justify-content-center py-5">
+  <div class="card shadow-lg p-5 w-100 text-center" style="max-width: 700px;">
+    <h1 class="card-title display-4 fw-bold text-dark mb-3">Welcome to TaskFlow!</h1>
+    <p class="card-text fs-5 text-muted mb-4">
+      Hello, <span class="fw-semibold text-primary">{{ currentUser?.firstName }} {{ currentUser?.lastName }}</span>!
+      You are logged in as <span class="fw-semibold text-primary">{{ currentUser?.email }}</span>.
+    </p>
+    <p class="card-text fs-6 text-secondary mb-5">
+      Your roles: <span class="fw-medium text-purple">{{ currentUser?.roles?.join(', ') || 'N/A' }}</span>
+    </p>
+    <div class="d-grid gap-3 d-md-flex justify-content-center">
+      <a routerLink="/projects" class="btn btn-primary btn-lg px-5 py-3 shadow">
+        View Projects
+      </a>
+      <a *ngIf="authService.hasRole(['Admin','ProjectManager'])" routerLink="/reports" class="btn btn-info btn-lg px-5 py-3 shadow">
+        Access Reports
+      </a>
+    </div>
+  </div>
+</div>

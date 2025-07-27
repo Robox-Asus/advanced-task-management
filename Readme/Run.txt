@@ -1,0 +1,8 @@
+## TaskManagement.Api 
+    - cd TaskManagement.Api && dotnet run
+
+check the applicationUrl in launchSettings.json file , https port number  
+
+## task-management-ui 
+    - cd task-management-ui && ng serve -o
+    - change the port number according in environment.ts file , key : apiUrl to https port number from Api
